@@ -4,13 +4,15 @@ from collections import deque
 class ClinicSimulationHetero:
     def __init__(self, arrival_rate_per_hour=15, 
                  service_rates_per_hour=[10, 12, 14],
-                 sim_time_minutes=8*60, seed=None):
+                 sim_time_minutes=8*60, seed=None,
+                 max_queue_length=None):
         if seed is not None:
             random.seed(seed)
         self.arrival_rate = arrival_rate_per_hour / 60.0
         self.service_rates = [r/60.0 for r in service_rates_per_hour]
         self.num_doctors = len(service_rates_per_hour)
         self.sim_time = sim_time_minutes
+        self.max_queue_length = max_queue_length
 
     def _next_interarrival(self):
         return random.expovariate(self.arrival_rate)
@@ -32,6 +34,7 @@ class ClinicSimulationHetero:
         queue = deque()
         records = []
         customer_id = 0
+        rejected_count = 0
 
         def find_free_doctor():
             for i, busy in enumerate(doctors_busy):
@@ -63,7 +66,11 @@ class ClinicSimulationHetero:
                     records.append({'id':customer_id,'arrival':arrival,'start':start,'end':end,
                                     'wait':0.0,'service':st,'doctor':free})
                 else:
-                    queue.append((customer_id, arrival))
+                    if self.max_queue_length is None or len(queue) < self.max_queue_length:
+                        queue.append((customer_id, arrival))
+                    else:
+                        rejected_count += 1
+
                 heapq.heappush(event_queue, (current_time + self._next_interarrival(), EVENT_ARRIVAL, 0))
 
             elif etype == EVENT_DEPARTURE:
@@ -86,22 +93,24 @@ class ClinicSimulationHetero:
 
         df = pd.DataFrame(records)
         if df.empty:
-            return df, {}
+            return df, {'rejected': rejected_count}
         metrics = {
             'num_served': len(df),
+            'num_rejected': rejected_count,
             'avg_wait_min': df['wait'].mean(),
             'avg_service_min': df['service'].mean(),
             'avg_time_in_system': (df['end']-df['arrival']).mean(),
-            'doctor_utilization': [doctors_total_busy_time[i]/self.sim_time for i in range(self.num_doctors)]
+            'doctor_utilization': [doctors_total_busy_time[i]/self.sim_time for i in range(self.num_doctors)],
         }
         return df, metrics
 
 
 sim = ClinicSimulationHetero(
     arrival_rate_per_hour=36,
-    service_rates_per_hour=[6, 8, 12],
+    service_rates_per_hour=[6, 8, 10],
     sim_time_minutes=8*60,
-    seed=42
+    seed=42,
+    max_queue_length=20
 )
 df, metrics = sim.run()
 
